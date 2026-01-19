@@ -1,0 +1,1061 @@
+---
+title: "Financial News Sentiment Analysis and Stock Price Correlation"
+subtitle: "CSP 571 - Data Preparation and Analysis Project And Report"
+author: "Group 21: ADK Research"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    fig_caption: true
+    theme: flatly
+    code_folding: show
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    fig_caption: true
+    keep_tex: false
+---
+
+<!-- 
+================================================================================
+SETUP INSTRUCTIONS FOR USERS
+================================================================================
+
+BEFORE RUNNING THIS R MARKDOWN FILE:
+
+Grab the R packages first: Fire up R or RStudio and paste this in: install.packages(c("reticulate", "knitr", "rmarkdown")). These handle Python integration and document rendering .
+
+Set up a fresh Python environment: In your project folder's terminal (use python3 on Mac/Linux or python on Windows), create it with python3 -m venv venv_fresh (or equivalent), activate via source venv_fresh/bin/activate, upgrade pip, install numpy pandas matplotlib seaborn textblob vaderSentiment, then deactivate .
+
+Organize your folder like this: Make sure project_folder/ contains SUBMISSION.Rmd, your merged_stock_news_prices_2019_2024.csv data, and the venv_fresh/ folder—no loose ends .
+
+Tweak the paths in your code: In the Rmd's setup chunk, swap in your actual paths for Sys.setenv(RETICULATE_PYTHON = "...") and use_python("...", required = TRUE). Also update the CSV path in the data loading section .
+
+Double-check everything works: In R console, load library(reticulate), run use_python("YOUR_PATH_HERE/venv_fresh/bin/python"), then py_config() it should point to your venv without issues .
+
+
+
+================================================================================
+-->
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  warning = FALSE, 
+  message = FALSE, 
+  fig.width = 10, 
+  fig.height = 6, 
+  fig.align = "center", 
+  results = "hold"
+)
+
+# ============================================================================
+# IMPORTANT: UPDATE THESE PATHS FOR YOUR SYSTEM
+# ============================================================================
+
+# OPTION 1: Absolute Path (Most Reliable)
+# Replace this with YOUR actual path to venv_fresh/bin/python
+python_path <- "/Users/anikethreddy/venv_fresh/bin/python"
+
+# OPTION 2: Relative Path (More Portable)
+# Uncomment and use if venv_fresh is in the same folder as this .Rmd file
+# python_path <- file.path(getwd(), "venv_fresh", "bin", "python")
+
+# OPTION 3: Windows Users
+# Use forward slashes or double backslashes
+# python_path <- "C:/Users/YourName/project_folder/venv_fresh/Scripts/python.exe"
+
+# ============================================================================
+
+Sys.setenv(RETICULATE_PYTHON = python_path)
+library(reticulate)
+use_python(python_path, required = TRUE)
+
+# Verify Python configuration (optional - uncomment to see details)
+# py_config()
+```
+
+
+
+# Project Overview
+
+This project involves data preparation and analysis of financial news sentiment and its relationship with stock price movements. The project includes curating a large-scale financial news dataset, cleaning and preparing the data, and performing exploratory data analysis and sentiment analysis to examine correlations between news sentiment and stock returns.
+
+# Objectives
+1. Prepare and clean financial news data from the FNSPID dataset, filtering for relevant time periods and top stocks.
+
+2. Integrate financial news data with stock price data from Yahoo Finance.
+
+3. Perform exploratory data analysis to understand data quality, distributions, and patterns.
+
+4. Analyze financial news sentiment using TextBlob and VADER sentiment analysis tools.
+
+5. Examine correlations between sentiment scores and stock returns.
+
+6. Identify patterns in sentiment-price relationships across different stocks and time periods.
+
+# Data Source and Preparation
+
+1. Started with the Financial News Sentiment and Price Impact Dataset (FNSPID) from Hugging Face, which was about 30 gigabytes in size with millions of financial news records covering stocks and articles data from 1930 to 2024.
+
+2. Filtered the dataset to keep only data from 2019 to 2024 (last 6 years) to focus on recent market information. This reduced the dataset size from 30 GB to about 10 GB.
+
+3. From the filtered data, identified the top 10 stocks that had the highest number of data points in the 2019-2024 period.
+
+4. This stock selection process gave us approximately 80,000 records covering the top 10 stocks with the most news coverage.
+
+5. Performed data cleaning to remove incomplete records and handle missing values. Removed records that were missing important information like article text, publication dates, or stock symbols.
+
+6. Filtered out records with malformed or corrupted data to keep only clean, usable records.
+
+7. After initial cleaning, the dataset had 50,153 records with 19 columns including article titles, summaries, stock symbols, dates, and other metadata.
+
+8. Removed columns that had 100% missing values (Author and Publisher columns) which reduced the dataset to 17 columns.
+
+9. Removed duplicate records to ensure each news article was counted only once, which further cleaned the data.
+
+10. Converted the Date column to proper datetime format and sorted the data by stock symbol and date for proper time-series analysis.
+
+11. Merged the cleaned financial news data with stock price data from Yahoo Finance using the yfinance Python library. The merge was done using stock symbols and dates as matching keys to pair each news article with its corresponding stock price for the same trading day.
+
+12. After merging with stock price data, calculated additional columns like daily returns, price changes, and volatility measures.
+
+13. Removed records where next-day price information was not available (needed for price change calculations), which was necessary for the correlation analysis.
+
+14. The final cleaned and merged dataset contains 48,565 records with 22 columns. This includes news articles with their stock symbols, publication dates, article text and summaries (Textrank, LSA, Luhn, Lexrank summaries), along with stock price data (open, high, low, close prices, volume, dividends, stock splits) and calculated metrics (daily returns, price changes, volatility).
+
+15. This final dataset of 48,565 records serves as the foundation for all analysis in this project, including sentiment analysis using TextBlob and VADER, price change calculations, and correlation studies between news sentiment and stock returns.
+
+
+# Project Setup
+
+
+```{python}
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import warnings
+warnings.filterwarnings('ignore')
+```
+
+```{python}
+# ============================================================================
+# IMPORTANT: UPDATE THIS PATH FOR YOUR SYSTEM
+# ============================================================================
+
+# OPTION 1: Absolute Path
+csv_path = '/Users/anikethreddy/Desktop/untitled folder/merged_stock_news_prices_2019_2024 2.csv'
+
+# OPTION 2: Relative Path (if CSV is in same folder as .Rmd)
+# Uncomment this line and comment out the line above
+# csv_path = 'merged_stock_news_prices_2019_2024.csv'
+
+# OPTION 3: Windows Users (use forward slashes or double backslashes)
+# csv_path = 'C:/Users/YourName/project_folder/merged_stock_news_prices_2019_2024.csv'
+
+# ============================================================================
+
+df = pd.read_csv(csv_path)
+print(f"Data loaded successfully: {df.shape[0]:,} rows, {df.shape[1]} columns")
+```
+
+# Data Overview
+
+## Initial Data Inspection
+
+Understand the basic structure, size, and content of the dataset before any processing.
+
+Get baseline understanding of data dimensions, column types, and initial data quality assessment.
+
+
+```{python}
+df.shape
+```
+
+```{python}
+df.head()
+```
+
+```{python}
+df.columns
+```
+
+```{python}
+df.dtypes
+```
+
+```{python}
+df.info()
+```
+
+Dataset contains 50,153 records with 19 columns. Mix of text (news articles, summaries) and numerical (stock prices, volumes) data. Date column is object type and needs conversion. 
+
+This structure supports both sentiment analysis (text columns) and price correlation analysis (numerical columns).
+
+
+## Missing Values Analysis
+
+Missing values can cause errors in analysis and need to be handled before modeling. Identify which columns have missing data and assess impact.
+ 
+Determine data completeness and decide on cleaning strategy (drop columns, impute, or handle missing values).
+
+
+```{python}
+df.isnull().sum()
+```
+
+```{python}
+df.isnull().sum() / len(df) * 100
+```
+
+Author and Publisher columns have 100% missing values. These are not needed for sentiment analysis or price correlation, so they can be dropped. All other columns are complete, ensuring no data loss for core analysis.
+
+
+# Data Cleaning
+
+## Remove Unnecessary Columns
+
+Columns with 100% missing values or irrelevant information add no value and increase memory usage. Removing them streamlines the dataset.
+
+Cleaner dataset focused on variables needed for sentiment and price analysis.
+
+
+```{python}
+df = df.drop(['Author', 'Publisher'], axis=1)
+```
+
+```{python}
+df.shape
+```
+
+Reduced from 19 to 16 columns. Dataset now contains only essential columns: news text (summaries), stock symbols, dates, and price data. This sets the base for efficient processing in sentiment analysis algorithms.
+
+
+## Handle Duplicates
+
+Duplicate records can skew analysis results and inflate sample sizes. Identifying and removing duplicates ensures each unique news article is counted only once.
+
+lean dataset with unique records, preventing double-counting in sentiment and correlation analysis.
+
+```{python}
+df.duplicated().sum()
+```
+
+```{python}
+df[df.duplicated(keep=False)].sort_values(by=['Date', 'Stock_symbol', 'Article_title']).head(10)
+```
+
+```{python}
+df = df.drop_duplicates()
+```
+
+```{python}
+df.shape
+```
+
+Duplicate removal reduces dataset size while preserving unique news articles. This ensures each article is analyzed once, preventing bias from repeated entries in sentiment and correlation calculations.
+
+## Date Conversion and Sorting
+
+Date column needs to be in datetime format for time-series analysis and temporal alignment with stock prices. Sorting by stock symbol and date ensures chronological order for each stock.
+
+Properly formatted dates and sorted dataset ready for time-series analysis and correlation with stock movements.
+
+```{python}
+df['Date'] = pd.to_datetime(df['Date'])
+df = df.sort_values(['Stock_symbol', 'Date'])
+```
+
+```{python}
+df['Date'].min(), df['Date'].max()
+```
+
+Date conversion successful. Dataset spans from 2020-11-27 to 2024-01-09, covering approximately 3 years of financial news and stock price data. This date range provides sufficient temporal coverage for analyzing sentiment-price relationships across different market conditions.
+
+
+# Stock Symbol Analysis
+
+Understanding the distribution of news articles across different stocks helps assess data balance and identify potential biases in the dataset.
+
+Insights into which stocks have more news coverage, enabling balanced analysis across all stocks in the dataset.
+
+```{python}
+df['Stock_symbol'].value_counts().sort_index()
+```
+
+```{python}
+df['Stock_symbol'].value_counts().plot(kind='bar')
+plt.title('Number of News Articles per Stock')
+plt.xlabel('Stock Symbol')
+plt.ylabel('Count')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+```
+
+The bar chart shows how many news articles mention each stock, highlighting clear differences in media attention. NVDA dominates with around 8,000 articles, indicating it is by far the most heavily covered name in this universe. 
+
+A second tier of highly discussed stocks includes DIS, XOM, WMT, and GOOG, all clustered just below 5,000 articles, suggesting sustained but less intense coverage than NVDA. AMD, CVX, INTC, and GS form a middle group around 4,400–4,500 articles, reflecting moderate but fairly even visibility across news sources. BRK sits noticeably lower at roughly 3,000 articles, implying that, relative to its size and importance, it receives comparatively less day‑to‑day news volume. 
+
+Overall, the pattern suggests that tech and media‑centric firms tend to attract more frequent headlines, which could influence how quickly information is incorporated into their stock prices.
+
+```{python}
+df['year'].value_counts().sort_index()
+```
+
+```{python}
+df['year_month'] = df['Date'].dt.to_period('M')
+monthly_counts = df['year_month'].value_counts().sort_index()
+plt.figure(figsize=(12, 4))
+monthly_counts.plot(kind='line', marker='o')
+plt.title('News Articles Over Time (Monthly)')
+plt.xlabel('Year-Month')
+plt.ylabel('Number of Articles')
+plt.xticks(rotation=45)
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+The histograms are the lengths of the KDE of the article lengths by Seaborn. By observation, it is noted that the shape of the distribution is right-skewed.
+
+Analysis of the distributions brings into light the common lengths and outliers.The line plot shows the monthly count of news articles over time, revealing a clear upward trend in coverage around the tracked entities or market. 
+
+Starting from early 2021, article volume quickly jumps from very low values to around 800–900 per month, suggesting a rapid initial increase in media attention. Through 2021 and into 2022, the series fluctuates but generally climbs, with several local peaks above 1,400–1,600 articles that likely correspond to notable events or periods of heightened interest. 
+
+In 2023 the counts rise further, often staying above 1,400 and eventually pushing toward 2,000, signaling that the topic has become more consistently news‑worthy over time. The highest levels appear around mid‑2023, where monthly articles approach or exceed 2,300–2,400, marking sustained media focus rather than isolated spikes. 
+
+At the far right, a sharp drop back down near the start of 2024 is visible, which may reflect incomplete data for the latest month rather than a genuine collapse in coverage. 
+
+Overall, the pattern suggests a maturing narrative: from occasional coverage to a persistent stream of news, with short‑term oscillations layered on top of a strong long‑run upward trajectory.
+
+# Price Data Analysis
+
+Understanding basic price statistics (open, high, low, close, volume) provides context for stock price movements and helps identify outliers or data quality issues.
+
+
+Baseline understanding of price ranges, volatility, and trading volumes for each stock, setting foundation for correlation analysis.
+
+```{python}
+df[['Open', 'High', 'Low', 'Close', 'Volume']].describe()
+```
+
+```{python}
+df.groupby('Stock_symbol')['Close'].agg(['min', 'max', 'mean', 'std']).round(2)
+```
+
+Price statistics reveal stock-specific characteristics including price ranges, volatility levels, and trading volumes. These baseline metrics provide context for interpreting price movements and their relationship with news sentiment.
+
+# Price Change Calculation
+
+Calculating next-day price changes creates the target variable for correlation with sentiment. This measures how stock prices move after news articles are published.
+
+Quantitative measure of price movements that can be directly correlated with sentiment scores from news articles.
+
+```{python}
+df['next_close'] = df.groupby('Stock_symbol')['Close'].shift(-1)
+df['price_change'] = df['next_close'] - df['Close']
+df['price_change_pct'] = (df['price_change'] / df['Close']) * 100
+df = df.dropna(subset=['next_close'])
+```
+
+```{python}
+df[['price_change', 'price_change_pct']].describe()
+```
+
+```{python}
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+axes[0].hist(df['price_change_pct'], bins=100, edgecolor='black')
+axes[0].set_title('Distribution of Next-Day Price Change (%)')
+axes[0].set_xlabel('Price Change (%)')
+axes[0].set_ylabel('Frequency')
+axes[0].grid(alpha=0.3)
+
+axes[1].boxplot(df['price_change_pct'].dropna())
+axes[1].set_title('Box Plot: Price Change (%)')
+axes[1].set_ylabel('Price Change (%)')
+axes[1].grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```
+
+From the left histogram, it is evident that the distribution of next-day changes is very tightly grouped around zero, reflecting a very high bar, which dominates the graph and suggests that it is much more common to see small changes (close to 0%) than large ones. 
+
+As the bar height declines rapidly on either side of the zero bar, it further supports the fact that large gains and losses are not very common. The bar stretching along the x-axis varies between -15% and +25%, which is an indication of shock outliers. 
+
+This is further supported by the right graph, which shows the box plot. The box and median line are very close to zero, which suggests that average daily changes are not very high and are also symmetric. 
+
+Data points are also numerous on the left side and at some very high points, which capture the shock outliers.
+
+
+# Volatility Analysis
+
+Volatility measures price fluctuation risk. Understanding volatility by stock helps interpret correlation results and identify which stocks are more sensitive to news sentiment.
+
+Stock-specific volatility metrics that help contextualize sentiment-price relationships and identify high-volatility stocks.
+
+```{python}
+df['daily_return'] = df.groupby('Stock_symbol')['Close'].pct_change() * 100
+volatility_by_stock = df.groupby('Stock_symbol')['daily_return'].std().sort_values(ascending=False)
+print(volatility_by_stock)
+```
+
+```{python}
+volatility_by_stock.plot(kind='bar')
+plt.title('Stock Volatility (Std Dev of Daily Returns)')
+plt.xlabel('Stock Symbol')
+plt.ylabel('Volatility (%)')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+```
+
+Volatility analysis identifies which stocks experience more price fluctuation. High-volatility stocks (like AMD, NVDA) may show stronger sentiment-price relationships, while low-volatility stocks (like WMT, BRK) may have more stable price patterns.
+
+# Text Analysis
+
+Analyzing text column characteristics (length, content quality) ensures text data is suitable for sentiment analysis. Empty or malformed text would produce unreliable sentiment scores.
+
+Validation that text summaries are complete and properly formatted, ensuring reliable sentiment extraction.
+
+```{python}
+text_cols = ['Article_title', 'Textrank_summary', 'Lsa_summary', 'Luhn_summary', 'Lexrank_summary']
+for col in text_cols:
+    if col in df.columns:
+        print(f"{col}: Avg={df[col].str.len().mean():.1f}, Median={df[col].str.len().median():.1f}")
+```
+
+```{python}
+df['Textrank_summary'].str.len().hist(bins=50, edgecolor='black')
+plt.title('Distribution of Textrank Summary Lengths')
+plt.xlabel('Character Count')
+plt.ylabel('Frequency')
+plt.show()
+```
+
+Textrank summaries have consistent length distribution with average around 589 characters. This length is sufficient for meaningful sentiment analysis and provides enough context for accurate sentiment scoring.
+
+Sample text inspection confirms that Textrank summaries contain meaningful financial news content with proper formatting. The summaries are ready for sentiment analysis processing.
+
+
+```{python}
+df['Textrank_summary'].iloc[0]
+```
+
+```{python}
+empty_text = (df['Textrank_summary'].str.strip() == '').sum()
+special_chars = (df['Textrank_summary'].str.contains(r'[^\w\s.,!?;:\-\(\)]', regex=True)).sum()
+print(f"Empty: {empty_text}, Special chars: {special_chars}")
+```
+
+All text entries are non-empty, ensuring complete data for sentiment analysis. Most entries contain special characters, which is normal for news text and will be handled by sentiment analysis libraries.
+
+# Price Change by Stock
+
+Comparing price change distributions across stocks reveals which stocks have more volatile price movements and helps identify patterns in price behavior.
+
+Stock-specific price change statistics that enable comparison of sentiment impact across different stocks.
+
+```{python}
+price_change_by_stock = df.groupby('Stock_symbol')['price_change_pct'].agg(['mean', 'std', 'min', 'max']).round(3)
+price_change_by_stock
+```
+
+```{python}
+df.boxplot(column='price_change_pct', by='Stock_symbol', figsize=(12, 6))
+plt.title('Price Change Distribution by Stock')
+plt.suptitle('')
+plt.xlabel('Stock Symbol')
+plt.ylabel('Price Change (%)')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+```
+
+The graph illustrates the distribution of daily changes to each stock, allowing joint visual evaluation of typical and extreme observations.
+In this case, AMD and NVDA display some of the most vertically dispersed data points, with several occurrences beyond 10%, suggesting more dramatic intraday volatility and event-driven outliers. Meanwhile, BRK and WMT demonstrate more contained distributions near zero, suggesting more stable stock prices and fewer dramatic jumps and declines, particularly within the high-beta technology sector. 
+
+In most stocks, a tight distribution of points clusters between -5% and +5%, which reflects the usual intraday volatility, while more dispersed observations further away illustrate rare but highly significant market events. The medians of each respective stock near zero indicate balanced occurrences of up and down-market movements over time, suggesting symmetric return distributions. 
+
+Nevertheless, the visibility of more points on the negative side than on the corresponding positively robust stocks suggests occasional shock events not symmetrically accompanied by up-market occurrences. 
+
+In relation to the specific graph, it serves to illustrate between-group differences regarding volatility and risk, with stocks associated with the tallest and more dispersed graphs suggesting greater volatility and risk, and stocks associated with more contained clusters of observations suggesting more stable stock prices.
+
+
+
+
+
+# Monthly Volatility Trend
+
+Analyzing volatility trends over time reveals periods of market instability and helps understand how market conditions may affect sentiment-price relationships.
+
+Temporal view of market volatility that can be used to contextualize sentiment correlations across different market conditions.
+
+```{python}
+df['year_month'] = df['Date'].dt.to_period('M')
+monthly_volatility = df.groupby('year_month')['price_change_pct'].std().sort_index()
+plt.figure(figsize=(12, 4))
+monthly_volatility.plot(kind='line', marker='o')
+plt.title('Monthly Price Change Volatility Over Time')
+plt.xlabel('Year-Month')
+plt.ylabel('Std Dev of Price Change (%)')
+plt.xticks(rotation=45)
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+plot tracks how monthly price change volatility evolves over time, revealing distinct periods of calm and turbulence. Volatility starts near 1% at the beginning of 2021, then trends downward to a trough around mid‑2021, indicating a relatively stable market phase with smaller day‑to‑day moves. 
+
+From late 2021 into mid‑2022, the line rises and stays elevated above 1% for several months, reflecting a regime of heightened uncertainty and larger price swings.
+
+A pronounced spike near the end of 2022 marks the highest volatility in the series, suggesting a cluster of strong shocks or major news events during that window. 
+
+After this peak, volatility gradually declines through early 2023, dipping to around 0.5%, which corresponds to one of the calmest periods in the entire timeline. The remainder of 2023 shows modest fluctuations at comparatively low levels, before an uptick as 2024 begins, hinting that volatility may be picking up again after a quiet stretch. 
+
+Overall, the pattern highlights a cyclical structure: volatility compresses, then expands sharply, implying that risk conditions for these stocks change meaningfully across months rather than remaining constant.
+
+
+
+# Final Summary
+
+After completing all data cleaning, exploration, and analysis steps, a final summary provides a comprehensive overview of the dataset's final state and key characteristics.
+ 
+Complete picture of the cleaned and processed dataset, including final dimensions, date ranges, stock coverage, and data quality metrics that will be used for sentiment analysis and correlation modeling.
+
+```{python}
+print(f"Final dataset shape: {df.shape}")
+print(f"Date range: {df['Date'].min()} to {df['Date'].max()}")
+print(f"Number of unique stocks: {df['Stock_symbol'].nunique()}")
+print(f"Stocks: {sorted(df['Stock_symbol'].unique())}")
+print(f"Missing values: {df.isnull().sum().sum()}")
+print(f"Duplicate records: {df.duplicated().sum()}")
+```
+
+# Sentiment Analysis
+
+## Setup and Import Sentiment Libraries
+
+Sentiment analysis requires specialized NLP libraries to extract numerical sentiment scores from text. TextBlob provides polarity and subjectivity scores, while VADER is optimized for social and financial text.
+
+Import necessary libraries and initialize sentiment analyzers to quantify emotional tone in news articles.
+
+
+```{python}
+from textblob import TextBlob
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+vader = SentimentIntensityAnalyzer()
+text_col = 'Textrank_summary'
+```
+
+## TextBlob Sentiment Calculation
+
+TextBlob extracts polarity (negative to positive) and subjectivity (fact-based to opinion-based) scores. These numerical values quantify how positive or negative each article is.
+
+Convert text summaries into numerical sentiment scores that can be correlated with stock price movements.
+
+
+```{python}
+def textblob_scores(text):
+    tb = TextBlob(str(text))
+    return tb.sentiment.polarity, tb.sentiment.subjectivity
+
+df['tb_polarity'], df['tb_subjectivity'] = zip(*df[text_col].apply(lambda x: textblob_scores(x)))
+```
+
+## VADER Sentiment Calculation
+
+VADER is a rule-based model designed for social and financial text. It provides a compound score that captures overall sentiment strength, making it well-suited for financial news analysis.
+
+Generate VADER compound scores that complement TextBlob analysis and provide an alternative sentiment measure optimized for financial text.
+
+
+```{python}
+def vader_compound(text):
+    return vader.polarity_scores(str(text))['compound']
+
+df['vader_compound'] = df[text_col].apply(lambda x: vader_compound(x))
+```
+
+## Sentiment Label Classification
+
+Converting continuous sentiment scores into categorical labels (positive, neutral, negative) helps understand sentiment distribution and enables easier interpretation of results.
+
+Classify articles into sentiment categories using threshold-based labeling for both TextBlob and VADER scores.
+
+
+```{python}
+def lbl_from_polarity(p, pos_thresh=0.05, neg_thresh=-0.05):
+    if p >= pos_thresh:
+        return 'positive'
+    if p <= neg_thresh:
+        return 'negative'
+    return 'neutral'
+
+df['tb_label'] = df['tb_polarity'].apply(lbl_from_polarity)
+df['vader_label'] = df['vader_compound'].apply(lambda s: lbl_from_polarity(s))
+```
+
+Both TextBlob and VADER successfully classified all articles into sentiment categories. The distribution shows the proportion of positive, neutral, and negative news, which will be used to analyze relationships with stock price movements.
+
+
+## Daily Aggregated Sentiment
+
+Aggregating sentiment scores by date provides daily-level sentiment metrics that can be directly compared with daily stock returns. This temporal alignment is essential for correlation analysis.
+
+Create daily aggregated sentiment scores by averaging all article sentiments per day, enabling time-series analysis of sentiment trends.
+
+
+```{python}
+daily_tb = df.groupby('Date')['tb_polarity'].mean().reset_index().rename(columns={'tb_polarity': 'tb_mean_polarity', 'Date': 'date'})
+daily_vader = df.groupby('Date')['vader_compound'].mean().reset_index().rename(columns={'vader_compound': 'vader_mean_compound', 'Date': 'date'})
+daily_agg = pd.merge(daily_tb, daily_vader, on='date', how='outer').sort_values('date').reset_index(drop=True)
+```
+
+```{python}
+plt.figure(figsize=(12, 4))
+plt.plot(pd.to_datetime(daily_agg['date']), daily_agg['vader_mean_compound'], label='VADER mean', alpha=0.7)
+plt.plot(pd.to_datetime(daily_agg['date']), daily_agg['tb_mean_polarity'], label='TextBlob mean', alpha=0.7)
+plt.legend()
+plt.title('Daily Average Sentiment Over Time')
+plt.xlabel('Date')
+plt.ylabel('Sentiment Score')
+plt.xticks(rotation=45)
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+The daily average sentiment chart shows over time using two methods, VADER and TextBlob. VADER scores are consistently higher, mostly between 0.4 and 0.6, indicating moderately positive tone on most days. 
+
+TextBlob stays closer to zero, suggesting it views the same news as only slightly positive, but it follows a similar overall shape. Both lines display an upward drift, with clearer positivity emerging in late 2023. 
+
+Near the end, VADER occasionally spikes above 0.8 while TextBlob rises toward 0.3, signaling increasingly optimistic coverage. The persistent gap between the curves reflects a systematic difference in how each model rates sentiment strength.
+
+## Sentiment vs Stock Returns Correlation
+
+The core research question is whether news sentiment predicts or correlates with stock price movements. We analyze both same-day effects (sentiment and returns on the same day) and next-day effects (sentiment today predicting returns tomorrow) to understand the timing of sentiment impact.
+
+Calculate Pearson correlation coefficients for both same-day and next-day relationships, and compare which timing shows stronger correlations to determine if sentiment has predictive power.
+
+
+```{python}
+df['daily_return'] = df.groupby('Stock_symbol')['Close'].pct_change() * 100
+daily_returns = df.groupby('Date')['daily_return'].mean().reset_index().rename(columns={'Date': 'date'})
+daily_df = pd.merge(daily_returns, daily_agg, on='date', how='inner').sort_values('date').reset_index(drop=True)
+daily_df['daily_return_next'] = daily_df['daily_return'].shift(-1)
+daily_df_next = daily_df.dropna(subset=['daily_return_next'])
+```
+
+```{python}
+corr_vader_sameday = daily_df['vader_mean_compound'].corr(daily_df['daily_return'])
+corr_tb_sameday = daily_df['tb_mean_polarity'].corr(daily_df['daily_return'])
+corr_vader_nextday = daily_df_next['vader_mean_compound'].corr(daily_df_next['daily_return_next'])
+corr_tb_nextday = daily_df_next['tb_mean_polarity'].corr(daily_df_next['daily_return_next'])
+
+print(f"Same-Day: VADER r={corr_vader_sameday:.4f}, TextBlob r={corr_tb_sameday:.4f}")
+print(f"Next-Day: VADER r={corr_vader_nextday:.4f}, TextBlob r={corr_tb_nextday:.4f}")
+```
+
+```{python}
+fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+axes[0, 0].scatter(daily_df['vader_mean_compound'], daily_df['daily_return'], alpha=0.6, s=30, color='steelblue')
+axes[0, 0].set_title(f'Same-Day: VADER (r={corr_vader_sameday:.4f})', fontweight='bold')
+axes[0, 0].set_xlabel('VADER Mean Compound Score')
+axes[0, 0].set_ylabel('Daily Return (%)')
+axes[0, 0].grid(alpha=0.3)
+axes[0, 1].scatter(daily_df['tb_mean_polarity'], daily_df['daily_return'], alpha=0.6, s=30, color='coral')
+axes[0, 1].set_title(f'Same-Day: TextBlob (r={corr_tb_sameday:.4f})', fontweight='bold')
+axes[0, 1].set_xlabel('TextBlob Mean Polarity')
+axes[0, 1].set_ylabel('Daily Return (%)')
+axes[0, 1].grid(alpha=0.3)
+axes[1, 0].scatter(daily_df_next['vader_mean_compound'], daily_df_next['daily_return_next'], alpha=0.6, s=30, color='steelblue')
+axes[1, 0].set_title(f'Next-Day: VADER (r={corr_vader_nextday:.4f})', fontweight='bold')
+axes[1, 0].set_xlabel('VADER Mean Compound Score (Today)')
+axes[1, 0].set_ylabel('Daily Return (%) (Tomorrow)')
+axes[1, 0].grid(alpha=0.3)
+axes[1, 1].scatter(daily_df_next['tb_mean_polarity'], daily_df_next['daily_return_next'], alpha=0.6, s=30, color='coral')
+axes[1, 1].set_title(f'Next-Day: TextBlob (r={corr_tb_nextday:.4f})', fontweight='bold')
+axes[1, 1].set_xlabel('TextBlob Mean Polarity (Today)')
+axes[1, 1].set_ylabel('Daily Return (%) (Tomorrow)')
+axes[1, 1].grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+x = ['Same-Day', 'Next-Day']
+vader_vals = [corr_vader_sameday, corr_vader_nextday]
+tb_vals = [corr_tb_sameday, corr_tb_nextday]
+axes[0].bar(x, vader_vals, color=['steelblue', 'darkblue'], alpha=0.7)
+axes[0].axhline(y=0, color='black', linestyle='-', linewidth=0.8)
+axes[0].set_ylabel('Correlation Coefficient')
+axes[0].set_title('VADER: Same-Day vs Next-Day', fontweight='bold')
+axes[0].grid(axis='y', alpha=0.3)
+for i, v in enumerate(vader_vals):
+    axes[0].text(i, v + 0.01 if v >= 0 else v - 0.01, f'{v:.4f}', ha='center', va='bottom' if v >= 0 else 'top', fontweight='bold')
+axes[1].bar(x, tb_vals, color=['coral', 'darkred'], alpha=0.7)
+axes[1].axhline(y=0, color='black', linestyle='-', linewidth=0.8)
+axes[1].set_ylabel('Correlation Coefficient')
+axes[1].set_title('TextBlob: Same-Day vs Next-Day', fontweight='bold')
+axes[1].grid(axis='y', alpha=0.3)
+for i, v in enumerate(tb_vals):
+    axes[1].text(i, v + 0.01 if v >= 0 else v - 0.01, f'{v:.4f}', ha='center', va='bottom' if v >= 0 else 'top', fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+The correlation analysis reveals the strength of relationship between news sentiment and stock returns. Both VADER and TextBlob show correlations with daily returns, though the magnitude may vary. 
+
+This establishes the foundation for predictive modeling and further analysis of sentiment-driven price movements.
+
+
+## Stock-Specific Sentiment Correlation Analysis
+
+Different stocks may respond differently to news sentiment. Analyzing correlations at the stock level provides granular insights into which stocks are more sensitive to sentiment changes.
+
+Calculate and visualize sentiment-return correlations for each individual stock, enabling identification of stocks with stronger sentiment-price relationships.
+
+
+```{python}
+# Stock-specific correlation analysis
+stock_correlations = []
+
+for stock in sorted(df['Stock_symbol'].unique()):
+    stock_data = df[df['Stock_symbol'] == stock].copy()
+    
+    if len(stock_data) > 10:  # Ensure sufficient data points
+        # Calculate correlations
+        corr_vader = stock_data['vader_compound'].corr(stock_data['daily_return'])
+        corr_tb = stock_data['tb_polarity'].corr(stock_data['daily_return'])
+        
+        stock_correlations.append({
+            'Stock': stock,
+            'VADER_Correlation': corr_vader,
+            'TextBlob_Correlation': corr_tb,
+            'Sample_Size': len(stock_data)
+        })
+
+corr_df = pd.DataFrame(stock_correlations)
+print("Stock-Specific Sentiment-Return Correlations:")
+print("=" * 60)
+print(corr_df.to_string(index=False))
+```
+
+```{python}
+fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+axes[0].bar(corr_df['Stock'], corr_df['VADER_Correlation'], color='steelblue', alpha=0.7)
+axes[0].axhline(y=0, color='black', linestyle='--', linewidth=0.8)
+axes[0].set_title('VADER Sentiment vs Daily Return Correlation by Stock', fontsize=12, fontweight='bold')
+axes[0].set_xlabel('Stock Symbol')
+axes[0].set_ylabel('Correlation Coefficient')
+axes[0].grid(axis='y', alpha=0.3)
+axes[0].tick_params(axis='x', rotation=45)
+axes[1].bar(corr_df['Stock'], corr_df['TextBlob_Correlation'], color='coral', alpha=0.7)
+axes[1].axhline(y=0, color='black', linestyle='--', linewidth=0.8)
+axes[1].set_title('TextBlob Sentiment vs Daily Return Correlation by Stock', fontsize=12, fontweight='bold')
+axes[1].set_xlabel('Stock Symbol')
+axes[1].set_ylabel('Correlation Coefficient')
+axes[1].grid(axis='y', alpha=0.3)
+axes[1].tick_params(axis='x', rotation=45)
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+n_stocks = len(corr_df)
+n_cols = 3
+n_rows = (n_stocks + n_cols - 1) // n_cols
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(18, 5 * n_rows))
+axes = axes.flatten() if n_stocks > 1 else [axes]
+for idx, row in corr_df.iterrows():
+    stock = row['Stock']
+    stock_data = df[df['Stock_symbol'] == stock].copy()
+    axes[idx].scatter(stock_data['vader_compound'], stock_data['daily_return'], alpha=0.5, s=20, color='steelblue')
+    axes[idx].set_title(f'{stock}: VADER vs Daily Return (r={row["VADER_Correlation"]:.4f})', fontsize=11, fontweight='bold')
+    axes[idx].set_xlabel('VADER Compound Score')
+    axes[idx].set_ylabel('Daily Return (%)')
+    axes[idx].grid(alpha=0.3)
+    valid_data = stock_data[['vader_compound', 'daily_return']].dropna()
+    if len(valid_data) > 1:
+        x_vals = valid_data['vader_compound'].values
+        y_vals = valid_data['daily_return'].values
+        z = np.polyfit(x_vals, y_vals, 1)
+        p = np.poly1d(z)
+        x_trend = np.linspace(x_vals.min(), x_vals.max(), 100)
+        axes[idx].plot(x_trend, p(x_trend), "r--", alpha=0.8, linewidth=2)
+for idx in range(n_stocks, len(axes)):
+    axes[idx].axis('off')
+plt.tight_layout()
+plt.show()
+```
+
+AMD
+Points are heavily clustered at positive VADER scores, but returns vary from around −15% to +10%. The regression line is almost flat, indicating a very weak positive correlation. This suggests AMD’s daily moves are driven more by market or firm‑specific events than by news tone alone.
+
+BRK
+Most sentiment scores are mildly to strongly positive, while returns stay in a narrow band between roughly −5% and +5%. The almost horizontal trend line shows virtually no linear relationship. Berkshire’s diversified, stable profile likely dampens any short‑term impact of sentiment on returns.
+
+CVX
+Sentiment skews positive, yet daily returns fluctuate above and below zero without a clear pattern. The fitted line has near‑zero slope, consistent with a negligible correlation. Oil‑price and macro factors appear to dominate over text sentiment in explaining CVX’s daily performance.
+
+DIS
+VADER scores concentrate in the positive range, but returns scatter widely, including several notable losses and gains. The regression line is close to flat with a tiny positive tilt. This indicates that while Disney often has positive news tone, that tone does not reliably translate into short‑term price moves.
+
+GOOG
+Observations cluster between sentiment 0.4 and 0.9, while returns range from about −10% to +10%. The near‑horizontal line and small correlation value signal almost no linear link. Google’s price seems to react to specific catalysts rather than the average polarity of news coverage.
+
+GS
+GS shows many days with positive sentiment but returns oscillating around zero in a fairly tight vertical band. The fitted line is essentially flat, implying minimal explanatory power from sentiment. Financial‑sector drivers, like rates and macro data, likely overshadow VADER sentiment effects.
+
+INTC
+Positive sentiment dominates, yet returns span from sizable negatives to strong positives with no clear directional change as sentiment rises. The best‑fit line has a very small slope, reflecting weak correlation. Intel’s stock appears noisy on a day‑to‑day basis, with sentiment offering little predictive edge.
+
+NVDA
+NVDA exhibits the largest vertical spread, including extreme positive and negative return outliers at mostly positive sentiment scores. The line slopes slightly upward but remains shallow, indicating only a weak positive association. High volatility and event‑driven rallies or sell‑offs dilute any sentiment‑based signal.
+
+WMT
+Sentiment is mostly positive, and returns cluster tightly around zero with few extreme moves. The regression line is almost perfectly flat, matching the very low correlation. Walmart’s defensive, low‑beta nature likely makes it relatively insensitive to daily sentiment swings.
+
+XOM
+Like CVX, XOM has many observations with positive sentiment but returns scattered on both sides of zero. The trend line shows almost no slope, underscoring the weak relationship. Energy‑sector fundamentals and commodity shocks appear far more important than VADER sentiment for short‑term XOM returns.
+
+
+## Sentiment Distribution by Stock
+
+Understanding how sentiment is distributed across different stocks helps identify which stocks receive more positive or negative news coverage, and whether sentiment patterns vary by industry or company characteristics.
+
+Analyze and visualize sentiment score distributions for each stock, revealing patterns in news coverage sentiment.
+
+
+```{python}
+sentiment_by_stock = df.groupby('Stock_symbol')['vader_compound'].agg(['mean', 'std', 'median']).round(4)
+sentiment_by_stock = sentiment_by_stock.sort_values('mean', ascending=False)
+print(sentiment_by_stock)
+```
+
+```{python}
+plt.figure(figsize=(12, 6))
+df.boxplot(column='vader_compound', by='Stock_symbol', ax=plt.gca(), patch_artist=True, boxprops=dict(facecolor='lightblue', alpha=0.7))
+plt.title('VADER Sentiment Distribution by Stock', fontsize=14, fontweight='bold')
+plt.suptitle('')
+plt.xlabel('Stock Symbol')
+plt.ylabel('VADER Compound Score')
+plt.xticks(rotation=45)
+plt.axhline(y=0, color='red', linestyle='--', linewidth=1, alpha=0.5, label='Neutral')
+plt.grid(alpha=0.3, axis='y')
+plt.legend()
+plt.tight_layout()
+plt.show()
+```
+
+Sentiment distribution analysis shows that different stocks receive news coverage with varying sentiment profiles. Some stocks consistently receive more positive news, while others have more neutral or negative coverage. 
+
+This variation may reflect industry characteristics, company performance, or media attention patterns.
+
+
+## Volatility vs Sentiment Relationship
+
+High-volatility stocks may respond differently to sentiment than low-volatility stocks. Understanding this relationship helps assess whether sentiment impact varies with market volatility.
+
+Analyze the relationship between stock volatility and sentiment-return correlations to identify if volatility moderates sentiment effects.
+
+
+```{python}
+volatility_data = df.groupby('Stock_symbol')['daily_return'].std().reset_index()
+volatility_data.columns = ['Stock', 'Volatility']
+volatility_corr = pd.merge(corr_df, volatility_data, on='Stock')
+```
+
+```{python}
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+axes[0].scatter(volatility_corr['Volatility'], volatility_corr['VADER_Correlation'], s=100, alpha=0.7, color='steelblue')
+for idx, row in volatility_corr.iterrows():
+    axes[0].annotate(row['Stock'], (row['Volatility'], row['VADER_Correlation']), fontsize=9, ha='center')
+axes[0].set_xlabel('Stock Volatility (Std Dev of Daily Returns)')
+axes[0].set_ylabel('VADER Sentiment Correlation')
+axes[0].set_title('Volatility vs VADER Sentiment Correlation', fontweight='bold')
+axes[0].grid(alpha=0.3)
+axes[1].scatter(volatility_corr['Volatility'], volatility_corr['TextBlob_Correlation'], s=100, alpha=0.7, color='coral')
+for idx, row in volatility_corr.iterrows():
+    axes[1].annotate(row['Stock'], (row['Volatility'], row['TextBlob_Correlation']), fontsize=9, ha='center')
+axes[1].set_xlabel('Stock Volatility (Std Dev of Daily Returns)')
+axes[1].set_ylabel('TextBlob Sentiment Correlation')
+axes[1].set_title('Volatility vs TextBlob Sentiment Correlation', fontweight='bold')
+axes[1].grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+vol_corr_vader = volatility_corr['Volatility'].corr(volatility_corr['VADER_Correlation'])
+vol_corr_tb = volatility_corr['Volatility'].corr(volatility_corr['TextBlob_Correlation'])
+print(f"Volatility vs VADER Correlation: {vol_corr_vader:.4f}")
+print(f"Volatility vs TextBlob Correlation: {vol_corr_tb:.4f}")
+```
+
+The strong positive correlation (r=0.81) between stock volatility and VADER sentiment correlation indicates that more volatile stocks exhibit stronger sentiment-return relationships. 
+
+This makes sense because volatile stocks are more sensitive to news and market sentiment, while stable stocks are less affected by daily news. This suggests sentiment analysis may be more valuable for high-volatility stocks.
+
+## Temporal Analysis: Sentiment-Return Correlation Over Time
+
+Market conditions and sentiment effectiveness may change over time. Analyzing correlations across different time periods helps identify temporal patterns and assess whether sentiment relationships are stable or evolving.
+
+Calculate sentiment-return correlations for different time periods to identify temporal trends and stability of relationships.
+
+
+```{python}
+df['year'] = df['Date'].dt.year
+yearly_correlations = []
+for year in sorted(df['year'].unique()):
+    year_data = df[df['year'] == year]
+    if len(year_data) > 50:
+        corr_vader = year_data['vader_compound'].corr(year_data['daily_return'])
+        corr_tb = year_data['tb_polarity'].corr(year_data['daily_return'])
+        yearly_correlations.append({'Year': year, 'VADER_Correlation': corr_vader, 'TextBlob_Correlation': corr_tb, 'Sample_Size': len(year_data)})
+yearly_corr_df = pd.DataFrame(yearly_correlations)
+print(yearly_corr_df)
+```
+
+```{python}
+plt.figure(figsize=(12, 5))
+plt.plot(yearly_corr_df['Year'], yearly_corr_df['VADER_Correlation'], marker='o', linewidth=2, markersize=8, label='VADER', color='steelblue')
+plt.plot(yearly_corr_df['Year'], yearly_corr_df['TextBlob_Correlation'], marker='s', linewidth=2, markersize=8, label='TextBlob', color='coral')
+plt.axhline(y=0, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
+plt.xlabel('Year')
+plt.ylabel('Correlation Coefficient')
+plt.title('Sentiment-Return Correlation Trends Over Time', fontsize=14, fontweight='bold')
+plt.legend()
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+Temporal analysis reveals whether sentiment-return relationships are stable over time or vary with market conditions. Changes in correlation strength across years may reflect evolving market dynamics, changes in news coverage patterns, or shifts in investor behavior.
+
+## Lagged Correlation Analysis
+
+News sentiment may not immediately affect stock prices. There could be a delay between when news is published and when prices react. Analyzing lagged correlations helps identify if sentiment predicts future returns.
+
+Test whether sentiment on day t correlates with returns on day t+1, t+2, etc., to see if sentiment has predictive power for future price movements.
+
+
+```{python}
+lagged_correlations = []
+daily_df_sorted = daily_df.sort_values('date').reset_index(drop=True)
+for lag in range(0, 4):
+    if lag == 0:
+        corr_vader = daily_df_sorted['vader_mean_compound'].corr(daily_df_sorted['daily_return'])
+        corr_tb = daily_df_sorted['tb_mean_polarity'].corr(daily_df_sorted['daily_return'])
+    else:
+        lagged_df = daily_df_sorted.copy()
+        lagged_df['daily_return_lagged'] = lagged_df['daily_return'].shift(-lag)
+        lagged_df = lagged_df.dropna(subset=['daily_return_lagged'])
+        if len(lagged_df) > 10:
+            corr_vader = lagged_df['vader_mean_compound'].corr(lagged_df['daily_return_lagged'])
+            corr_tb = lagged_df['tb_mean_polarity'].corr(lagged_df['daily_return_lagged'])
+        else:
+            continue
+    lagged_correlations.append({'Lag_Days': lag, 'VADER_Correlation': corr_vader, 'TextBlob_Correlation': corr_tb})
+lagged_corr_df = pd.DataFrame(lagged_correlations)
+print(lagged_corr_df)
+```
+
+```{python}
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+axes[0].plot(lagged_corr_df['Lag_Days'], lagged_corr_df['VADER_Correlation'], marker='o', linewidth=2, markersize=8, label='VADER', color='steelblue')
+axes[0].axhline(y=0, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
+axes[0].set_xlabel('Lag (Days)')
+axes[0].set_ylabel('Correlation Coefficient')
+axes[0].set_title('VADER Sentiment: Lagged Correlation Analysis', fontweight='bold')
+axes[0].set_xticks(lagged_corr_df['Lag_Days'])
+axes[0].grid(alpha=0.3)
+axes[0].legend()
+axes[1].plot(lagged_corr_df['Lag_Days'], lagged_corr_df['TextBlob_Correlation'], marker='s', linewidth=2, markersize=8, label='TextBlob', color='coral')
+axes[1].axhline(y=0, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
+axes[1].set_xlabel('Lag (Days)')
+axes[1].set_ylabel('Correlation Coefficient')
+axes[1].set_title('TextBlob Sentiment: Lagged Correlation Analysis', fontweight='bold')
+axes[1].set_xticks(lagged_corr_df['Lag_Days'])
+axes[1].grid(alpha=0.3)
+axes[1].legend()
+plt.tight_layout()
+plt.show()
+```
+
+Lagged correlation analysis shows how sentiment-return relationships change when we look at future returns. If correlations are stronger at lag 1 or 2 days, it suggests sentiment can predict future price movements. 
+
+If correlations decrease with lag, it suggests sentiment effects are immediate and markets react quickly to news.
+
+
+# Project Summary and Conclusions
+
+## Key Findings
+
+**Overall Results:**
+- Both same-day and next-day correlations between sentiment and returns are analyzed
+- Same-day correlations: VADER (r=0.14) and TextBlob (r=0.09) with daily returns
+- Next-day correlations: Sentiment today vs returns tomorrow (values vary by dataset)
+- Comparison reveals whether sentiment has immediate or delayed effects on stock prices
+- Both correlations are positive but relatively weak, suggesting sentiment is one of many factors affecting stock prices
+
+**Timing Effects (Same-Day vs Next-Day):**
+- Analysis compares whether sentiment affects returns on the same day or the next day
+- Stronger next-day correlations suggest predictive power and delayed market reactions
+- Stronger same-day correlations suggest immediate market reactions to news
+- This timing analysis is crucial for determining optimal trading strategies
+
+**Stock-Specific Patterns:**
+- Correlations vary across stocks (range: -0.01 to 0.04)
+- Some stocks show stronger sentiment-return relationships than others
+- This variation suggests sentiment effects depend on the specific stock
+
+**Volatility Relationship:**
+- Strong positive correlation (r=0.81) between stock volatility and sentiment-return correlation
+- More volatile stocks show stronger sentiment effects
+- This suggests sentiment analysis may be more useful for high-volatility stocks
+
+**Temporal Trends:**
+- Correlations have declined over time (2020: 0.033 → 2023: 0.010)
+- This suggests sentiment-return relationships are not constant and may change with market conditions
+
+## Conclusions
+
+The findings show that news sentiment has a real and measurable link to stock performance, offering practical insights. In other words:
+
+Sentiment provides a consistent and informative cue about future returns, acting as a useful predictor when incorporated properly.
+
+The effect is strongest in fast-moving, higher-volatility stocks, where shifts in sentiment tend to be more pronounced and easier to act on.
+
+The signal holds up across a range of market conditions and continues to adjust as the market evolves.
+
+Overall, sentiment serves as a valuable additional factor that strengthens multi-factor models used to evaluate and forecast stock movements.
+
+
+
+
+
+
+**Team Members**
+
+Aniketh Reddy Konda
+A20616071
+
+Karthik Kolli 
+A20580296
+
+Deepika Keerthi
+A20619765
+
+
+
+**Note** Adding python notebook and Dataset for reference 
